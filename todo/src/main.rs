@@ -5,14 +5,14 @@ use std::fs::{self, File};
 use std::io::{self, stdout, ErrorKind, Write};
 use std::path::Path;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 enum TaskImportance {
     HIGH,
     MID,
     LOW,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Task {
     description: String,
     completed: bool,
@@ -24,10 +24,11 @@ fn cli() -> ArgMatches {
         .subcommand_required(true)
         .subcommand(Command::new("add").about("Add to todo list"))
         .subcommand(Command::new("complete").about("Mark task as complete"))
+        .subcommand(Command::new("read").about("Read current tasks in the db"))
         .get_matches()
 }
 
-fn main() -> std::io::Result<()> {
+fn main() -> std::result::Result<(), std::io::Error> {
     const DB_PATH: &str = "todo/db.json";
 
     let matches = cli();
@@ -38,12 +39,29 @@ fn main() -> std::io::Result<()> {
         importance: TaskImportance::HIGH,
     };
 
+    let mut task_list: Vec<Task> = Vec::new();
+
+    let f = File::open(DB_PATH);
+
+    let _ = match f {
+        Ok(file) => file,
+        Err(error) => match error.kind() {
+            ErrorKind::NotFound => match File::create(DB_PATH) {
+                Ok(new_file) => new_file,
+                Err(e) => panic!("Problem creating the file {:?}.", e),
+            },
+            _ => todo!(),
+        },
+    };
+
+    let data = fs::read_to_string(DB_PATH).expect("Unable to reach db.");
+
     match matches.subcommand() {
-        Some(("add", add)) => {
+        Some(("add", _add)) => {
             println!("Add a task description.");
 
             print!("Description: ");
-            stdout().flush().unwrap();
+            stdout().flush()?;
 
             let mut description = String::new();
 
@@ -60,7 +78,7 @@ fn main() -> std::io::Result<()> {
                 println!("What is the importance of the task? (HIGH, MID, LOW)");
 
                 print!("Importance: ");
-                stdout().flush().unwrap();
+                stdout().flush()?;
 
                 let mut importance = String::new();
 
@@ -87,46 +105,40 @@ fn main() -> std::io::Result<()> {
                 break;
             }
 
+            task.description = description.clone();
+
+            if fs::metadata(DB_PATH)?.len() != 0 {
+                task_list = serde_json::from_str(&data)?;
+            }
+
+            task_list.push(task.clone());
+
+            // Convert the data to a JSON string
+            let json: String = serde_json::to_string_pretty(&task_list)?;
+
+            fs::write(DB_PATH, &json).expect("Unable to write to db.");
+
             println!(
                 "Adding task with description: '{description}' and importance {:?}",
                 task.importance
             );
-            task.description = description;
         }
 
-        Some(("complete", complete)) => {
+        Some(("complete", _complete)) => {
             println!("Task complete")
+        }
+        Some(("read", _read)) => {
+            let db = fs::read_to_string(DB_PATH).expect("Unable to reach db.");
+            // let tasks = serde_json::from_str(&db);
+            if db.is_empty() {
+                println!("Your todo list is empty. Great job partner.");
+            } else {
+                // let obj = serde_json::from_str(&db)?;
+                println!("{:#?}", db);
+            };
         }
         _ => unreachable!(),
     }
-
-    let f = File::open(DB_PATH);
-
-    let _ = match f {
-        Ok(file) => file,
-        Err(error) => match error.kind() {
-            ErrorKind::NotFound => match File::create(DB_PATH) {
-                Ok(new_file) => new_file,
-                Err(e) => panic!("Problem creating the file {:?}.", e),
-            },
-            _ => todo!(),
-        },
-    };
-
-    let data = fs::read_to_string(DB_PATH).expect("Unable to reach db.");
-
-    let mut task_list: Vec<Task> = Vec::new();
-
-    if fs::metadata(DB_PATH).unwrap().len() != 0 {
-        task_list = serde_json::from_str(&data)?;
-    }
-
-    task_list.push(task);
-
-    // Convert the data to a JSON string
-    let json: String = serde_json::to_string_pretty(&task_list)?;
-
-    fs::write(DB_PATH, &json).expect("Unable to write to db.");
 
     // println!("{}", &json);
 
